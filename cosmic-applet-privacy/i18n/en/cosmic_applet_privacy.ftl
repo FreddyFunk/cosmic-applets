@@ -1,0 +1,11 @@
+camera = Camera
+microphone = Microphone
+screen-share = Screen Sharing
+screen-record = Screen Recording
+camera-in-use = Camera in use
+microphone-in-use = Microphone in use
+screen-share-in-use = Screen is being shared
+screen-record-in-use = Screen is being recorded
+using-device = Using: {$device}
+unknown-app = Unknown Application
+privacy-settings = Privacy & Security settings...
