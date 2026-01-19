@@ -2,43 +2,79 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::pipewire_monitor::{DeviceType, DeviceUsage, PipeWireEvent, check_camera_proc, pipewire_subscription};
-use cosmic::cosmic_theme::palette::WithAlpha;
-use cosmic::iced::{Background, Border, Subscription};
-use cosmic::theme::{Container, Svg, Theme};
-use cosmic::widget::container::Style as ContainerStyle;
+use cosmic::iced::Subscription;
+use cosmic::theme::{Svg, Theme};
 use cosmic::widget::svg::Style as SvgStyle;
 use cosmic::widget::{icon, layer_container, Column, Row};
 use cosmic::{app, Application, Apply, Element, Task};
-use cosmic_time::{anim, chain, Instant, Timeline};
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
-use std::sync::LazyLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const APP_ID: &str = "com.system76.CosmicAppletPrivacy";
 
-static REC_ICON: LazyLock<crate::rec_icon::Id> = LazyLock::new(crate::rec_icon::Id::unique);
+/// How long to keep showing an indicator after device stops being used
+const COOLDOWN_DURATION: Duration = Duration::from_secs(10);
 
 pub fn run() -> cosmic::iced::Result {
     cosmic::applet::run::<PrivacyIndicator>(())
 }
 
-#[derive(Default)]
-struct Shared {
-    pub microphone: bool,
-    pub screenshare: bool,
-    pub camera: bool,
+/// State for each indicator type
+#[derive(Debug, Clone, Copy)]
+struct IndicatorState {
+    /// Whether the device is currently active
+    active: bool,
+    /// When the device was last active (for cooldown)
+    last_active: Option<Instant>,
+}
+
+impl Default for IndicatorState {
+    fn default() -> Self {
+        Self {
+            active: false,
+            last_active: None,
+        }
+    }
+}
+
+impl IndicatorState {
+    /// Returns true if the indicator should be visible (active or in cooldown)
+    fn should_show(&self) -> bool {
+        if self.active {
+            return true;
+        }
+        if let Some(last) = self.last_active {
+            return last.elapsed() < COOLDOWN_DURATION;
+        }
+        false
+    }
+
+    /// Update state based on whether device is currently active
+    fn update(&mut self, is_active: bool) {
+        if is_active {
+            self.active = true;
+            self.last_active = Some(Instant::now());
+        } else if self.active {
+            // Transition from active to inactive - start cooldown
+            self.active = false;
+            self.last_active = Some(Instant::now());
+        }
+    }
 }
 
 #[derive(Default)]
 pub struct PrivacyIndicator {
     core: cosmic::app::Core,
-    timeline: Timeline,
-    shared: Shared,
     /// Active devices from PipeWire, keyed by node_id
     pipewire_devices: FxHashMap<u32, DeviceUsage>,
     /// Active cameras from /proc scanning, keyed by PID
     proc_cameras: FxHashMap<u32, DeviceUsage>,
+    /// State for each indicator type
+    camera_state: IndicatorState,
+    microphone_state: IndicatorState,
+    screenshare_state: IndicatorState,
+    screenrecord_state: IndicatorState,
 }
 
 impl PrivacyIndicator {
@@ -47,28 +83,29 @@ impl PrivacyIndicator {
             || self.proc_cameras.values().any(|d| d.device_type == device_type)
     }
 
-    fn update_shared(&mut self) {
-        let old_shared = (self.shared.camera, self.shared.microphone, self.shared.screenshare);
-        self.shared = Shared {
-            microphone: self.has_device_type(DeviceType::Microphone),
-            screenshare: self.has_device_type(DeviceType::ScreenShare)
-                || self.has_device_type(DeviceType::ScreenRecord),
-            camera: self.has_device_type(DeviceType::Camera) || !self.proc_cameras.is_empty(),
-        };
-        let new_shared = (self.shared.camera, self.shared.microphone, self.shared.screenshare);
-        if old_shared != new_shared {
-            tracing::debug!(
-                "Shared state changed: camera={}, mic={}, screen={}",
-                self.shared.camera, self.shared.microphone, self.shared.screenshare
-            );
-        }
+    fn update_states(&mut self) {
+        let camera_active = self.has_device_type(DeviceType::Camera) || !self.proc_cameras.is_empty();
+        let mic_active = self.has_device_type(DeviceType::Microphone);
+        let screenshare_active = self.has_device_type(DeviceType::ScreenShare);
+        let screenrecord_active = self.has_device_type(DeviceType::ScreenRecord);
+
+        self.camera_state.update(camera_active);
+        self.microphone_state.update(mic_active);
+        self.screenshare_state.update(screenshare_active);
+        self.screenrecord_state.update(screenrecord_active);
+    }
+
+    fn any_visible(&self) -> bool {
+        self.camera_state.should_show()
+            || self.microphone_state.should_show()
+            || self.screenshare_state.should_show()
+            || self.screenrecord_state.should_show()
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Tick,
-    RecTick(Instant),
     PipeWire(PipeWireEvent),
 }
 
@@ -88,13 +125,9 @@ impl Application for PrivacyIndicator {
 
     fn init(core: cosmic::app::Core, _flags: Self::Flags) -> (Self, app::Task<Self::Message>) {
         tracing::debug!("Privacy applet initializing...");
-        let mut timeline = Timeline::new();
-        timeline.set_chain(chain![REC_ICON]).start();
-
         (
             Self {
                 core,
-                timeline,
                 ..Default::default()
             },
             Task::none(),
@@ -106,56 +139,47 @@ impl Application for PrivacyIndicator {
         let size = self.core.applet.suggested_size(true);
         let pad = self.core.applet.suggested_padding(true);
 
-        let Shared {
-            microphone,
-            screenshare,
-            camera,
-        } = self.shared;
-
-        // If nothing active, return empty (hides applet)
-        if !screenshare && !microphone && !camera {
+        // If nothing visible, return empty (hides applet)
+        if !self.any_visible() {
             return "".into();
         }
 
         let mut icons: Vec<Element<Self::Message>> = vec![];
 
-        // Animated recording indicator
-        icons.push(anim![REC_ICON, &self.timeline, size.0].into());
+        // Helper to create an indicator with appropriate styling
+        let make_indicator = |icon_name: &str, state: &IndicatorState| -> Element<Self::Message> {
+            let is_active = state.active;
 
-        // Icon styling to match theme
-        let icon_style = Rc::new(|theme: &Theme| SvgStyle {
-            color: Some(theme.cosmic().button_color().into()),
-        });
-        let indicator = |name: &str| {
-            icon(icon::from_name(name).into())
-                .class(Svg::Custom(icon_style.clone()))
+            // Icon color: accent/active hint when active, normal button color when in cooldown
+            let icon_style: Rc<dyn Fn(&Theme) -> SvgStyle> = if is_active {
+                Rc::new(|theme: &Theme| SvgStyle {
+                    color: Some(theme.cosmic().accent.base.into()),
+                })
+            } else {
+                Rc::new(|theme: &Theme| SvgStyle {
+                    color: Some(theme.cosmic().button_color().into()),
+                })
+            };
+
+            icon(icon::from_name(icon_name).into())
+                .class(Svg::Custom(icon_style))
                 .size(size.0)
+                .into()
         };
 
-        if camera {
-            icons.push(indicator("camera-web-symbolic").into());
+        // Add indicators for each device type if they should be shown
+        if self.camera_state.should_show() {
+            icons.push(make_indicator("camera-web-symbolic", &self.camera_state));
         }
-        if microphone {
-            icons.push(indicator("audio-input-microphone-symbolic").into());
+        if self.microphone_state.should_show() {
+            icons.push(make_indicator("audio-input-microphone-symbolic", &self.microphone_state));
         }
-        if screenshare {
-            icons.push(indicator("accessories-screenshot-symbolic").into());
+        if self.screenshare_state.should_show() {
+            icons.push(make_indicator("screen-shared-symbolic", &self.screenshare_state));
         }
-
-        // Container styling with semi-transparent background
-        let container_style = |theme: &Theme| {
-            let cosmic = theme.cosmic();
-            ContainerStyle {
-                background: Some(Background::Color(
-                    cosmic.primary.base.with_alpha(0.5).into(),
-                )),
-                border: Border {
-                    radius: cosmic.corner_radii.radius_xl.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        };
+        if self.screenrecord_state.should_show() {
+            icons.push(make_indicator("media-record-symbolic", &self.screenrecord_state));
+        }
 
         let container = if horizontal {
             Row::with_children(icons)
@@ -166,8 +190,7 @@ impl Application for PrivacyIndicator {
                 .spacing(pad.1)
                 .apply(layer_container)
         }
-        .padding([pad.1, pad.0])
-        .class(Container::Custom(Box::new(container_style)));
+        .padding([pad.1, pad.0]);
 
         self.core.applet.autosize_window(container).into()
     }
@@ -176,19 +199,8 @@ impl Application for PrivacyIndicator {
         match message {
             Message::Tick => {
                 // Check for cameras using /proc (fallback for non-PipeWire camera access)
-                let old_count = self.proc_cameras.len();
                 self.proc_cameras = check_camera_proc();
-                let new_count = self.proc_cameras.len();
-                if new_count != old_count {
-                    tracing::debug!("Camera count changed: {} -> {}", old_count, new_count);
-                    for (pid, usage) in &self.proc_cameras {
-                        tracing::debug!("  Camera: {} (PID {}) using {}", usage.app_name, pid, usage.device_name);
-                    }
-                }
-                self.update_shared();
-            }
-            Message::RecTick(now) => {
-                self.timeline.now(now);
+                self.update_states();
             }
             Message::PipeWire(event) => match event {
                 PipeWireEvent::DeviceAdded(usage) => {
@@ -198,7 +210,7 @@ impl Application for PrivacyIndicator {
                         usage.device_name
                     );
                     self.pipewire_devices.insert(usage.node_id, usage);
-                    self.update_shared();
+                    self.update_states();
                 }
                 PipeWireEvent::DeviceRemoved(node_id) => {
                     if let Some(usage) = self.pipewire_devices.remove(&node_id) {
@@ -208,7 +220,7 @@ impl Application for PrivacyIndicator {
                             usage.device_name
                         );
                     }
-                    self.update_shared();
+                    self.update_states();
                 }
                 PipeWireEvent::Error(err) => {
                     tracing::error!("PipeWire error: {}", err);
@@ -222,10 +234,8 @@ impl Application for PrivacyIndicator {
         Subscription::batch([
             // PipeWire device monitoring
             pipewire_subscription().map(Message::PipeWire),
-            // Timeline animation at 50Hz (like the community extension)
-            cosmic::iced::time::every(Duration::from_millis(20)).map(Message::RecTick),
-            // Camera polling via /proc (every 2 seconds)
-            cosmic::iced::time::every(Duration::from_secs(2)).map(|_| Message::Tick),
+            // Tick every 500ms to check cooldown timers and /proc cameras
+            cosmic::iced::time::every(Duration::from_millis(500)).map(|_| Message::Tick),
         ])
     }
 

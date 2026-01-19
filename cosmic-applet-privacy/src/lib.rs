@@ -4,7 +4,6 @@
 mod app;
 mod localize;
 mod pipewire_monitor;
-mod rec_icon;
 
 use localize::localize;
 

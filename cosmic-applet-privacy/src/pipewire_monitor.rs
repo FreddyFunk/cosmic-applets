@@ -319,6 +319,12 @@ pub fn check_camera_proc() -> FxHashMap<u32, DeviceUsage> {
                             .map(|s| s.trim().to_string())
                             .unwrap_or_else(|_| "Unknown".to_string());
 
+                        // Skip PipeWire daemon and related processes - they access
+                        // /dev/video* on behalf of other apps, not directly
+                        if app_name == "pipewire" || app_name == "wireplumber" {
+                            continue;
+                        }
+
                         // Use PID as a unique identifier for this camera usage
                         let node_id = pid;
 

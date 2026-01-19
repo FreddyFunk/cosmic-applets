@@ -1385,6 +1385,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "cosmic-applet-privacy"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "glob",
+ "i18n-embed",
+ "i18n-embed-fl",
+ "libcosmic",
+ "pipewire",
+ "rust-embed",
+ "rustc-hash 2.1.1",
+ "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cosmic-applet-status-area"
 version = "1.0.2"
 dependencies = [
