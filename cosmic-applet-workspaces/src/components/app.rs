@@ -23,7 +23,7 @@ use cosmic::{
     },
     scroll::DiscreteScrollState,
     surface,
-    widget::{Id, autosize, container, space},
+    widget::{Id, autosize, container, indeterminate_circular, space},
 };
 
 use crate::{
@@ -176,7 +176,12 @@ impl cosmic::Application for IcedWorkspacesApplet {
 
     fn view(&self) -> Element<'_, Message> {
         if self.workspaces.is_empty() {
-            return row![].padding(8).into();
+            // No workspaces yet means we are still waiting for the first
+            // compositor update; show a spinner instead of an empty slot.
+            let size = self.core.applet.suggested_size(true).0 as f32;
+            return container(indeterminate_circular().size(size))
+                .padding(8)
+                .into();
         }
         let horizontal = matches!(
             self.core.applet.anchor,
