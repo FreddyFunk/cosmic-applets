@@ -29,7 +29,9 @@ use cosmic::{
     },
     surface,
     theme::{self, Button},
-    widget::{button, divider, icon, scrollable, slider, space, text, toggler},
+    widget::{
+        button, divider, icon, indeterminate_circular, scrollable, slider, space, text, toggler,
+    },
 };
 use cosmic_applets_config::battery::BatteryAppletConfig;
 use cosmic_config::{Config, CosmicConfigEntry};
@@ -63,6 +65,23 @@ pub fn run() -> cosmic::iced::Result {
     cosmic::applet::run::<CosmicBatteryApplet>(())
 }
 
+/// Trailing indicator for a power-profile row: a spinner while a switch is
+/// pending, a checkmark for the active profile, otherwise nothing.
+fn profile_indicator<'a>(is_active: bool, is_pending: bool) -> Element<'a, Message> {
+    if is_pending {
+        indeterminate_circular().size(16.0).into()
+    } else if is_active {
+        container(
+            icon::from_name("emblem-ok-symbolic")
+                .size(12)
+                .symbolic(true),
+        )
+        .into()
+    } else {
+        container(space::horizontal().width(1.0)).into()
+    }
+}
+
 #[derive(Clone, Default)]
 struct GPUData {
     name: String,
@@ -91,6 +110,7 @@ struct CosmicBatteryApplet {
     settings_daemon_sender: Option<UnboundedSender<settings_daemon::Request>>,
     kbd_sender: Option<UnboundedSender<KeyboardBacklightRequest>>,
     power_profile: Power,
+    pending_profile: Option<Power>,
     power_profile_sender: Option<UnboundedSender<PowerProfileRequest>>,
     token_tx: Option<calloop::channel::Sender<TokenRequest>>,
     zbus_connection: Option<zbus::Connection>,
@@ -414,13 +434,15 @@ impl cosmic::Application for CosmicBatteryApplet {
             }
             Message::Profile(profile) => {
                 self.power_profile = profile;
+                self.pending_profile = None;
                 if let Some(tx) = &self.kbd_sender {
                     let _ = tx.send(KeyboardBacklightRequest::Get);
                 }
             }
             Message::SelectProfile(profile) => {
                 if let Some(tx) = self.power_profile_sender.as_ref() {
-                    let _ = tx.send(PowerProfileRequest::Set(profile));
+                    let _ = tx.send(PowerProfileRequest::Set(profile.clone()));
+                    self.pending_profile = Some(profile);
                 }
             }
             Message::CloseRequested(id) => {
@@ -672,15 +694,10 @@ impl cosmic::Application for CosmicBatteryApplet {
                         text::caption(fl!("battery-desc"))
                     ]
                     .width(Length::Fill),
-                    if matches!(self.power_profile, Power::Battery) {
-                        container(
-                            icon::from_name("emblem-ok-symbolic")
-                                .size(12)
-                                .symbolic(true),
-                        )
-                    } else {
-                        container(space::horizontal().width(1.0))
-                    }
+                    profile_indicator(
+                        matches!(self.power_profile, Power::Battery),
+                        matches!(self.pending_profile, Some(Power::Battery)),
+                    )
                 ]
                 .align_y(Alignment::Center),
             )
@@ -693,15 +710,10 @@ impl cosmic::Application for CosmicBatteryApplet {
                         text::caption(fl!("balanced-desc"))
                     ]
                     .width(Length::Fill),
-                    if matches!(self.power_profile, Power::Balanced) {
-                        container(
-                            icon::from_name("emblem-ok-symbolic")
-                                .size(12)
-                                .symbolic(true),
-                        )
-                    } else {
-                        container(space::horizontal().width(1.0))
-                    }
+                    profile_indicator(
+                        matches!(self.power_profile, Power::Balanced),
+                        matches!(self.pending_profile, Some(Power::Balanced)),
+                    )
                 ]
                 .align_y(Alignment::Center),
             )
@@ -714,15 +726,10 @@ impl cosmic::Application for CosmicBatteryApplet {
                         text::caption(fl!("performance-desc"))
                     ]
                     .width(Length::Fill),
-                    if matches!(self.power_profile, Power::Performance) {
-                        container(
-                            icon::from_name("emblem-ok-symbolic")
-                                .size(12)
-                                .symbolic(true),
-                        )
-                    } else {
-                        container(space::horizontal().width(1.0))
-                    }
+                    profile_indicator(
+                        matches!(self.power_profile, Power::Performance),
+                        matches!(self.pending_profile, Some(Power::Performance)),
+                    )
                 ]
                 .align_y(Alignment::Center),
             )
