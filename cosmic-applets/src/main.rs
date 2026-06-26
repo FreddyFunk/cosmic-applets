@@ -26,6 +26,7 @@ fn main() -> cosmic::iced::Result {
         "cosmic-applet-network" => cosmic_applet_network::run(),
         "cosmic-applet-notifications" => cosmic_applet_notifications::run(),
         "cosmic-applet-power" => cosmic_applet_power::run(),
+        "cosmic-applet-privacy" => cosmic_applet_privacy::run(),
         "cosmic-applet-status-area" => cosmic_applet_status_area::run(),
         "cosmic-applet-tiling" => cosmic_applet_tiling::run(),
         "cosmic-applet-time" => cosmic_applet_time::run(),

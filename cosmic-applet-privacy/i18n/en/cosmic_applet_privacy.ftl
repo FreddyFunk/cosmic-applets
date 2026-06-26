@@ -9,3 +9,4 @@ screen-record-in-use = Screen is being recorded
 using-device = Using: {$device}
 unknown-app = Unknown Application
 privacy-settings = Privacy & Security settings...
+no-active-devices = No devices currently in use

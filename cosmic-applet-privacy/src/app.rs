@@ -1,14 +1,14 @@
 // Copyright 2025 System76 <info@system76.com>
 // SPDX-License-Identifier: GPL-3.0-only
 
+use crate::fl;
 use crate::pipewire_monitor::{DeviceType, DeviceUsage, PipeWireEvent, check_camera_proc, pipewire_subscription};
-use cosmic::iced::Subscription;
-use cosmic::theme::{Svg, Theme};
-use cosmic::widget::svg::Style as SvgStyle;
-use cosmic::widget::{icon, layer_container, Column, Row};
-use cosmic::{app, Application, Apply, Element, Task};
+use cosmic::iced::{Alignment, Length, Subscription, window};
+use cosmic::iced::platform_specific::shell::wayland::commands::popup::{destroy_popup, get_popup};
+use cosmic::iced::widget::{column, row};
+use cosmic::widget::{divider, horizontal_space, icon, text};
+use cosmic::{app, Application, Element, Task, theme};
 use rustc_hash::FxHashMap;
-use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 const APP_ID: &str = "com.system76.CosmicAppletPrivacy";
@@ -66,6 +66,8 @@ impl IndicatorState {
 #[derive(Default)]
 pub struct PrivacyIndicator {
     core: cosmic::app::Core,
+    /// Popup window ID
+    popup: Option<window::Id>,
     /// Active devices from PipeWire, keyed by node_id
     pipewire_devices: FxHashMap<u32, DeviceUsage>,
     /// Active cameras from /proc scanning, keyed by PID
@@ -81,6 +83,14 @@ impl PrivacyIndicator {
     fn has_device_type(&self, device_type: DeviceType) -> bool {
         self.pipewire_devices.values().any(|d| d.device_type == device_type)
             || self.proc_cameras.values().any(|d| d.device_type == device_type)
+    }
+
+    fn get_devices_by_type(&self, device_type: DeviceType) -> Vec<&DeviceUsage> {
+        self.pipewire_devices
+            .values()
+            .chain(self.proc_cameras.values())
+            .filter(|d| d.device_type == device_type)
+            .collect()
     }
 
     fn update_states(&mut self) {
@@ -106,6 +116,8 @@ impl PrivacyIndicator {
 #[derive(Debug, Clone)]
 pub enum Message {
     Tick,
+    TogglePopup,
+    CloseRequested(window::Id),
     PipeWire(PipeWireEvent),
 }
 
@@ -135,64 +147,83 @@ impl Application for PrivacyIndicator {
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        let horizontal = self.core.applet.is_horizontal();
-        let size = self.core.applet.suggested_size(true);
-        let pad = self.core.applet.suggested_padding(true);
+        // TEMPORARY TEST: Always show a static icon like bluetooth does
+        // to verify if the background issue is in our view code or elsewhere
+        self.core
+            .applet
+            .icon_button("camera-web-symbolic")
+            .on_press_down(Message::TogglePopup)
+            .into()
+    }
 
-        // If nothing visible, return empty (hides applet)
-        if !self.any_visible() {
-            return "".into();
+    fn view_window(&self, _id: window::Id) -> Element<'_, Self::Message> {
+        let spacing = theme::active().cosmic().spacing;
+
+        let mut content: Vec<Element<Self::Message>> = vec![];
+
+        // Camera section
+        let camera_devices = self.get_devices_by_type(DeviceType::Camera);
+        if !camera_devices.is_empty() {
+            content.push(self.device_section(
+                "camera-web-symbolic",
+                fl!("camera"),
+                &camera_devices,
+            ));
         }
 
-        let mut icons: Vec<Element<Self::Message>> = vec![];
-
-        // Helper to create an indicator with appropriate styling
-        let make_indicator = |icon_name: &str, state: &IndicatorState| -> Element<Self::Message> {
-            let is_active = state.active;
-
-            // Icon color: accent/active hint when active, normal button color when in cooldown
-            let icon_style: Rc<dyn Fn(&Theme) -> SvgStyle> = if is_active {
-                Rc::new(|theme: &Theme| SvgStyle {
-                    color: Some(theme.cosmic().accent.base.into()),
-                })
-            } else {
-                Rc::new(|theme: &Theme| SvgStyle {
-                    color: Some(theme.cosmic().button_color().into()),
-                })
-            };
-
-            icon(icon::from_name(icon_name).into())
-                .class(Svg::Custom(icon_style))
-                .size(size.0)
-                .into()
-        };
-
-        // Add indicators for each device type if they should be shown
-        if self.camera_state.should_show() {
-            icons.push(make_indicator("camera-web-symbolic", &self.camera_state));
-        }
-        if self.microphone_state.should_show() {
-            icons.push(make_indicator("audio-input-microphone-symbolic", &self.microphone_state));
-        }
-        if self.screenshare_state.should_show() {
-            icons.push(make_indicator("screen-shared-symbolic", &self.screenshare_state));
-        }
-        if self.screenrecord_state.should_show() {
-            icons.push(make_indicator("media-record-symbolic", &self.screenrecord_state));
+        // Microphone section
+        let mic_devices = self.get_devices_by_type(DeviceType::Microphone);
+        if !mic_devices.is_empty() {
+            if !content.is_empty() {
+                content.push(divider::horizontal::default().into());
+            }
+            content.push(self.device_section(
+                "audio-input-microphone-symbolic",
+                fl!("microphone"),
+                &mic_devices,
+            ));
         }
 
-        let container = if horizontal {
-            Row::with_children(icons)
-                .spacing(pad.0)
-                .apply(layer_container)
-        } else {
-            Column::with_children(icons)
-                .spacing(pad.1)
-                .apply(layer_container)
+        // Screen share section
+        let screenshare_devices = self.get_devices_by_type(DeviceType::ScreenShare);
+        if !screenshare_devices.is_empty() {
+            if !content.is_empty() {
+                content.push(divider::horizontal::default().into());
+            }
+            content.push(self.device_section(
+                "screen-shared-symbolic",
+                fl!("screen-share"),
+                &screenshare_devices,
+            ));
         }
-        .padding([pad.1, pad.0]);
 
-        self.core.applet.autosize_window(container).into()
+        // Screen record section
+        let screenrecord_devices = self.get_devices_by_type(DeviceType::ScreenRecord);
+        if !screenrecord_devices.is_empty() {
+            if !content.is_empty() {
+                content.push(divider::horizontal::default().into());
+            }
+            content.push(self.device_section(
+                "media-record-symbolic",
+                fl!("screen-record"),
+                &screenrecord_devices,
+            ));
+        }
+
+        // If no active devices, show a message
+        if content.is_empty() {
+            let msg = fl!("no-active-devices");
+            content.push(text::body(msg).into());
+        }
+
+        self.core
+            .applet
+            .popup_container(
+                column(content)
+                    .spacing(spacing.space_xxs)
+                    .padding([spacing.space_xs, spacing.space_none])
+            )
+            .into()
     }
 
     fn update(&mut self, message: Self::Message) -> app::Task<Self::Message> {
@@ -201,6 +232,29 @@ impl Application for PrivacyIndicator {
                 // Check for cameras using /proc (fallback for non-PipeWire camera access)
                 self.proc_cameras = check_camera_proc();
                 self.update_states();
+            }
+            Message::TogglePopup => {
+                if let Some(p) = self.popup.take() {
+                    return destroy_popup(p);
+                }
+
+                let new_id = window::Id::unique();
+                self.popup.replace(new_id);
+
+                let popup_settings = self.core.applet.get_popup_settings(
+                    self.core.main_window_id().unwrap(),
+                    new_id,
+                    None,
+                    None,
+                    None,
+                );
+
+                return get_popup(popup_settings);
+            }
+            Message::CloseRequested(id) => {
+                if Some(id) == self.popup {
+                    self.popup = None;
+                }
             }
             Message::PipeWire(event) => match event {
                 PipeWireEvent::DeviceAdded(usage) => {
@@ -239,7 +293,50 @@ impl Application for PrivacyIndicator {
         ])
     }
 
+    fn on_close_requested(&self, id: window::Id) -> Option<Self::Message> {
+        Some(Message::CloseRequested(id))
+    }
+
     fn style(&self) -> Option<cosmic::iced_runtime::Appearance> {
         Some(cosmic::applet::style())
+    }
+}
+
+impl PrivacyIndicator {
+    fn device_section<'a>(
+        &'a self,
+        icon_name: &'a str,
+        title: String,
+        devices: &[&'a DeviceUsage],
+    ) -> Element<'a, Message> {
+        let spacing = theme::active().cosmic().spacing;
+
+        let mut items: Vec<Element<Message>> = vec![
+            row![
+                icon::from_name(icon_name).size(20).symbolic(true),
+                text::body(title),
+            ]
+            .spacing(spacing.space_xs)
+            .align_y(Alignment::Center)
+            .into(),
+        ];
+
+        for device in devices {
+            items.push(
+                row![
+                    horizontal_space().width(Length::Fixed(28.0)),
+                    column![
+                        text::body(&device.app_name),
+                        text::caption(&device.device_name),
+                    ]
+                ]
+                .into(),
+            );
+        }
+
+        column(items)
+            .spacing(spacing.space_xxs)
+            .padding([spacing.space_xxs, spacing.space_s])
+            .into()
     }
 }

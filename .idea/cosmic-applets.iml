@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-app-list/cosmic-app-list-config/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-app-list/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applet-a11y/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applet-audio/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applet-battery/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applet-bluetooth/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applet-input-sources/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applet-minimize/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applet-network/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applet-notifications/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applet-power/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applet-status-area/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applet-tiling/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applet-time/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applet-workspaces/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applets-config/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-applets/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-panel-button/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>
