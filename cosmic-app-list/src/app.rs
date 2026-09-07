@@ -804,6 +804,10 @@ impl CosmicAppList {
             self.update_desktop_entries();
             if let Some(appid) = fde::find_app_by_id(&self.desktop_entries, unicase_appid) {
                 appid.clone()
+            } else if let Some(entry) =
+                find_steam_desktop_entry(&self.desktop_entries, &info.app_id)
+            {
+                entry.clone()
             } else {
                 tracing::error!(id = info.app_id, "could not find desktop entry for app");
                 let mut fallback_entry = fde::DesktopEntry::from_appid(info.app_id.clone());
@@ -2550,6 +2554,41 @@ fn launch_on_preferred_gpu(desktop_info: &DesktopEntry, gpus: Option<&[Gpu]>) ->
         gpu_idx,
         desktop_info.terminal(),
     ))
+}
+
+fn steam_exec_matches_app_id(arguments: &[String], app_id: &str) -> bool {
+    let Some(id) = app_id.strip_prefix("steam_app_") else {
+        return false;
+    };
+    if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+
+    let expected = format!("steam://rungameid/{id}");
+    arguments.iter().any(|argument| {
+        let argument = if argument.starts_with('"') {
+            argument
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+        } else if argument.ends_with('"') {
+            None
+        } else {
+            Some(argument.as_str())
+        };
+        argument == Some(expected.as_str())
+    })
+}
+
+fn find_steam_desktop_entry<'a>(
+    entries: &'a [DesktopEntry],
+    app_id: &str,
+) -> Option<&'a DesktopEntry> {
+    entries.iter().find(|entry| {
+        !entry.hidden()
+            && entry
+                .parse_exec()
+                .is_ok_and(|arguments| steam_exec_matches_app_id(&arguments, app_id))
+    })
 }
 
 fn preferred_gpu_idx<'a, I>(desktop_info: &DesktopEntry, mut gpus: I) -> usize
