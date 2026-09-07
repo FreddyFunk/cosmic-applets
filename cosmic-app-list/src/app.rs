@@ -2116,6 +2116,10 @@ impl cosmic::Application for CosmicAppList {
 
             let toplevels = &filtered_toplevels;
             let desktop_info = &dock_item.desktop_info;
+            let automatic_gpu_idx = automatic_gpu_idx_from_available(
+                self.gpus.as_deref(),
+                desktop_info.prefers_non_default_gpu(),
+            );
 
             match popup_type {
                 PopupType::RightClickMenu => {
@@ -2134,12 +2138,17 @@ impl cosmic::Application for CosmicAppList {
 
                     if let Some(exec) = desktop_info.exec() {
                         if !toplevels.is_empty() {
-                            content =
-                                content.push(menu_button(text::body(fl!("new-window"))).on_press(
-                                    Message::Exec(exec.to_string(), None, desktop_info.terminal()),
-                                ));
+                            content = content.push(
+                                menu_button(text::body(fl!("new-window"))).on_press(Message::Exec(
+                                    exec.to_string(),
+                                    automatic_gpu_idx,
+                                    desktop_info.terminal(),
+                                )),
+                            );
                         } else if let Some(gpus) = self.gpus.as_ref() {
-                            let default_idx = preferred_gpu_idx(desktop_info, gpus.iter());
+                            let default_idx =
+                                preferred_gpu_idx(gpus, desktop_info.prefers_non_default_gpu())
+                                    .unwrap_or(0);
                             for (i, gpu) in gpus.iter().enumerate() {
                                 content = content.push(
                                     menu_button(text::body(format!(
@@ -2177,7 +2186,11 @@ impl cosmic::Application for CosmicAppList {
                                 continue;
                             };
                             content = content.push(menu_button(text::body(name)).on_press(
-                                Message::Exec(exec.into(), None, desktop_info.terminal()),
+                                Message::Exec(
+                                    exec.into(),
+                                    automatic_gpu_idx,
+                                    desktop_info.terminal(),
+                                ),
                             ));
                         }
                         content = content.push(divider::horizontal::light());
@@ -2543,7 +2556,7 @@ impl cosmic::Application for CosmicAppList {
 fn launch_on_preferred_gpu(desktop_info: &DesktopEntry, gpus: Option<&[Gpu]>) -> Option<Message> {
     let exec = desktop_info.exec()?;
 
-    let gpu_idx = gpus.map(|gpus| preferred_gpu_idx(desktop_info, gpus.iter()));
+    let gpu_idx = automatic_gpu_idx_from_available(gpus, desktop_info.prefers_non_default_gpu());
 
     Some(Message::Exec(
         exec.to_string(),
@@ -2552,12 +2565,27 @@ fn launch_on_preferred_gpu(desktop_info: &DesktopEntry, gpus: Option<&[Gpu]>) ->
     ))
 }
 
-fn preferred_gpu_idx<'a, I>(desktop_info: &DesktopEntry, mut gpus: I) -> usize
-where
-    I: Iterator<Item = &'a Gpu>,
-{
-    gpus.position(|gpu| gpu.default ^ desktop_info.prefers_non_default_gpu())
-        .unwrap_or(0)
+fn preferred_gpu_idx(gpus: &[Gpu], prefers_discrete: bool) -> Option<usize> {
+    if prefers_discrete {
+        gpus.iter()
+            .position(|gpu| gpu.default && gpu.discrete)
+            .or_else(|| gpus.iter().position(|gpu| gpu.discrete))
+            .or_else(|| gpus.iter().position(|gpu| !gpu.default))
+    } else {
+        gpus.iter().position(|gpu| gpu.default)
+    }
+}
+
+fn automatic_gpu_idx(gpus: &[Gpu], prefers_discrete: bool) -> Option<usize> {
+    if !prefers_discrete || gpus.iter().any(|gpu| gpu.default && gpu.discrete) {
+        None
+    } else {
+        preferred_gpu_idx(gpus, true)
+    }
+}
+
+fn automatic_gpu_idx_from_available(gpus: Option<&[Gpu]>, prefers_discrete: bool) -> Option<usize> {
+    gpus.and_then(|gpus| automatic_gpu_idx(gpus, prefers_discrete))
 }
 
 #[derive(Debug, Default, Clone)]
